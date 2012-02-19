@@ -5,9 +5,6 @@
 #include "newsfeed_types.h"
 #include "mmapstring.h"
 
-#ifdef HAVE_EXPAT
-#include <expat.h>
-#endif
 
 struct newsfeed_parser_context {
   unsigned int depth;
@@ -19,9 +16,6 @@ struct newsfeed_parser_context {
   
   int error;
   
-#ifdef HAVE_EXPAT
-  void * parser;
-#endif
 };
 
 time_t newsfeed_rfc822_date_parse(char * text);

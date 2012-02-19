@@ -44,9 +44,6 @@
 #include "newsfeed_item.h"
 #include "parser.h"
 
-#ifdef HAVE_CURL
-#include <curl/curl.h>
-#endif
 
 #ifdef LIBETPAN_REENTRANT
 #	ifndef WIN32
@@ -54,9 +51,6 @@
 #	endif
 #endif
 
-#ifdef HAVE_CURL
-static int curl_error_convert(int curl_res);
-#endif
 
 /* feed_new()
  * Initializes new Feed struct, setting its url and a default timeout. */
@@ -303,248 +297,13 @@ struct newsfeed_item * newsfeed_get_item(struct newsfeed * feed, unsigned int n)
  * we got from url's server. */
 int newsfeed_update(struct newsfeed * feed, time_t last_update)
 {
-#if (defined(HAVE_CURL) && defined(HAVE_EXPAT))
-  CURL * eh;
-  CURLcode curl_res;
-  struct newsfeed_parser_context * feed_ctx;
-  unsigned int res;
-  unsigned int timeout_value;
-  long response_code;
-  
-  if (feed->feed_url == NULL) {
-    res = NEWSFEED_ERROR_BADURL;
-    goto err;
-  }
-  
-  /* Init curl before anything else. */
-  eh = curl_easy_init();
-  if (eh == NULL) {
-    res = NEWSFEED_ERROR_MEMORY;
-    goto err;
-  }
-  
-  /* Curl initialized, create parser context now. */
-  feed_ctx = malloc(sizeof(* feed_ctx));
-  if (feed_ctx == NULL) {
-    res = NEWSFEED_ERROR_MEMORY;
-    goto free_eh;
-  }
-  
-  feed_ctx->parser = XML_ParserCreate(NULL);
-  if (feed_ctx->parser == NULL) {
-    res = NEWSFEED_ERROR_MEMORY;
-    goto free_ctx;
-  }
-  feed_ctx->depth = 0;
-  feed_ctx->str = mmap_string_sized_new(256);
-  if (feed_ctx->str == NULL) {
-    res = NEWSFEED_ERROR_MEMORY;
-    goto free_praser;
-  }
-  feed_ctx->feed = feed;
-  feed_ctx->location = 0;
-  feed_ctx->curitem = NULL;
-  feed_ctx->error = NEWSFEED_NO_ERROR;
-  
-  /* Set initial expat handlers, which will take care of choosing
-   * correct parser later. */
-  newsfeed_parser_set_expat_handlers(feed_ctx);
-  
-  if (feed->feed_timeout != 0)
-    timeout_value = feed->feed_timeout;
-  else
-    timeout_value = mailstream_network_delay.tv_sec;
-  
-  curl_easy_setopt(eh, CURLOPT_URL, feed->feed_url);
-  curl_easy_setopt(eh, CURLOPT_NOPROGRESS, 1);
-#ifdef CURLOPT_MUTE
-  curl_easy_setopt(eh, CURLOPT_MUTE, 1);
-#endif
-  curl_easy_setopt(eh, CURLOPT_WRITEFUNCTION, newsfeed_writefunc);
-  curl_easy_setopt(eh, CURLOPT_WRITEDATA, feed_ctx);
-  curl_easy_setopt(eh, CURLOPT_FOLLOWLOCATION, 1);
-  curl_easy_setopt(eh, CURLOPT_MAXREDIRS, 3);
-  curl_easy_setopt(eh, CURLOPT_TIMEOUT, timeout_value);
-  curl_easy_setopt(eh, CURLOPT_NOSIGNAL, 1);
-  curl_easy_setopt(eh, CURLOPT_USERAGENT, "libEtPan!");
-  
-  /* Use HTTP's If-Modified-Since feature, if application provided
-   * the timestamp of last update. */
-  if (last_update != -1) {
-    curl_easy_setopt(eh, CURLOPT_TIMECONDITION,
-        CURL_TIMECOND_IFMODSINCE);
-    curl_easy_setopt(eh, CURLOPT_TIMEVALUE, last_update);
-  }
-        
-#if LIBCURL_VERSION_NUM >= 0x070a00
-  curl_easy_setopt(eh, CURLOPT_SSL_VERIFYPEER, 0);
-  curl_easy_setopt(eh, CURLOPT_SSL_VERIFYHOST, 0);
-#endif
-
-  curl_res = curl_easy_perform(eh);
-  if (curl_res != 0) {
-    res = curl_error_convert(curl_res);
-    goto free_str;
-  }
-  
-  curl_easy_getinfo(eh, CURLINFO_RESPONSE_CODE, &response_code);
-  
-  curl_easy_cleanup(eh);
-  
-  if (feed_ctx->error != NEWSFEED_NO_ERROR) {
-    res = feed_ctx->error;
-    goto free_str;
-  }
-  
-  /* Cleanup, we should be done. */
-  mmap_string_free(feed_ctx->str);
-  XML_ParserFree(feed_ctx->parser);
-  free(feed_ctx);
-  
-  feed->feed_response_code = (int) response_code;
-  
-  return NEWSFEED_NO_ERROR;;
-  
- free_str:
-  mmap_string_free(feed_ctx->str);
- free_praser:
-  XML_ParserFree(feed_ctx->parser);
- free_ctx:
-  free(feed_ctx);
- free_eh:
-  curl_easy_cleanup(eh);
- err:
-  return res;
-#else
   return NEWSFEED_ERROR_INTERNAL;
-#endif
 }
 
 int newsfeed_add_item(struct newsfeed * feed, struct newsfeed_item * item)
 {
   return carray_add(feed->feed_item_list, item, NULL);
 }
-
-#ifdef HAVE_CURL
-static int curl_error_convert(int curl_res)
-{
-  switch (curl_res) {
-  case CURLE_OK:
-    return NEWSFEED_NO_ERROR;
-    
-  case CURLE_UNSUPPORTED_PROTOCOL:
-    return NEWSFEED_ERROR_UNSUPPORTED_PROTOCOL;
-    
-  case CURLE_FAILED_INIT:
-  case CURLE_LIBRARY_NOT_FOUND:
-  case CURLE_FUNCTION_NOT_FOUND:
-  case CURLE_BAD_FUNCTION_ARGUMENT:
-  case CURLE_BAD_CALLING_ORDER:
-  case CURLE_UNKNOWN_TELNET_OPTION:
-  case CURLE_TELNET_OPTION_SYNTAX:
-  case CURLE_OBSOLETE:
-  case CURLE_GOT_NOTHING:
-  case CURLE_INTERFACE_FAILED:
-  case CURLE_SHARE_IN_USE:
-  case CURL_LAST:
-    return NEWSFEED_ERROR_INTERNAL;
-    
-  case CURLE_URL_MALFORMAT:
-  case CURLE_URL_MALFORMAT_USER:
-  case CURLE_MALFORMAT_USER:
-    return NEWSFEED_ERROR_BADURL;
-    
-  case CURLE_COULDNT_RESOLVE_PROXY:
-    return NEWSFEED_ERROR_RESOLVE_PROXY;
-    
-  case CURLE_COULDNT_RESOLVE_HOST:
-    return NEWSFEED_ERROR_RESOLVE_HOST;
-    
-  case CURLE_COULDNT_CONNECT:
-    return NEWSFEED_ERROR_CONNECT;
-    
-  case CURLE_FTP_WEIRD_SERVER_REPLY:
-  case CURLE_FTP_WEIRD_PASS_REPLY:
-  case CURLE_FTP_WEIRD_USER_REPLY:
-  case CURLE_FTP_WEIRD_PASV_REPLY:
-  case CURLE_FTP_WEIRD_227_FORMAT:
-    return NEWSFEED_ERROR_PROTOCOL;
-    
-  case CURLE_FTP_ACCESS_DENIED:
-    return NEWSFEED_ERROR_ACCESS;
-    
-  case CURLE_FTP_USER_PASSWORD_INCORRECT:
-  case CURLE_BAD_PASSWORD_ENTERED:
-  case CURLE_LOGIN_DENIED:
-    return NEWSFEED_ERROR_AUTHENTICATION;
-    
-  case CURLE_FTP_CANT_GET_HOST:
-  case CURLE_FTP_CANT_RECONNECT:
-  case CURLE_FTP_COULDNT_SET_BINARY:
-  case CURLE_FTP_QUOTE_ERROR:
-  case CURLE_FTP_COULDNT_SET_ASCII:
-  case CURLE_FTP_PORT_FAILED:
-  case CURLE_FTP_COULDNT_USE_REST:
-  case CURLE_FTP_COULDNT_GET_SIZE:
-    return NEWSFEED_ERROR_FTP;
-    
-  case CURLE_PARTIAL_FILE:
-    return NEWSFEED_ERROR_PARTIAL_FILE;
-    
-  case CURLE_FTP_COULDNT_RETR_FILE:
-  case CURLE_FILE_COULDNT_READ_FILE:
-  case CURLE_BAD_DOWNLOAD_RESUME:
-  case CURLE_FILESIZE_EXCEEDED:
-    return NEWSFEED_ERROR_FETCH;
-    
-  case CURLE_FTP_COULDNT_STOR_FILE:
-  case CURLE_HTTP_POST_ERROR:
-    return NEWSFEED_ERROR_PUT;
-    
-  case CURLE_OUT_OF_MEMORY:
-    return NEWSFEED_ERROR_MEMORY;
-    
-  case CURLE_OPERATION_TIMEOUTED:
-    return NEWSFEED_ERROR_STREAM;
-    
-  case CURLE_HTTP_RANGE_ERROR:
-  case CURLE_HTTP_RETURNED_ERROR:
-  case CURLE_TOO_MANY_REDIRECTS:
-  case CURLE_BAD_CONTENT_ENCODING:
-    return NEWSFEED_ERROR_HTTP;
-    
-  case CURLE_LDAP_CANNOT_BIND:
-  case CURLE_LDAP_SEARCH_FAILED:
-  case CURLE_LDAP_INVALID_URL:
-    return NEWSFEED_ERROR_LDAP;
-
-  case CURLE_ABORTED_BY_CALLBACK:
-    return NEWSFEED_ERROR_CANCELLED;
-    
-  case CURLE_FTP_WRITE_ERROR:
-  case CURLE_SEND_ERROR:
-  case CURLE_RECV_ERROR:
-  case CURLE_READ_ERROR:
-  case CURLE_WRITE_ERROR:
-  case CURLE_SEND_FAIL_REWIND:
-    return NEWSFEED_ERROR_STREAM;
-    
-  case CURLE_SSL_CONNECT_ERROR:
-  case CURLE_SSL_PEER_CERTIFICATE:
-  case CURLE_SSL_ENGINE_NOTFOUND:
-  case CURLE_SSL_ENGINE_SETFAILED:
-  case CURLE_SSL_CERTPROBLEM:
-  case CURLE_SSL_CIPHER:
-  case CURLE_SSL_CACERT:
-  case CURLE_FTP_SSL_FAILED:
-  case CURLE_SSL_ENGINE_INITFAILED:
-    return NEWSFEED_ERROR_SSL;
-    
-  default:
-    return NEWSFEED_ERROR_INTERNAL;
-  }
-}
-#endif
 
 void newsfeed_set_timeout(struct newsfeed * feed, unsigned int timeout)
 {

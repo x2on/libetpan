@@ -88,21 +88,6 @@ static int prepare_fd(int fd)
   return 0;
 }
 
-#ifdef HAVE_IPV6
-static int verify_sock_errors(int s)
-{
-  uint len;
-  int val;
-  len = sizeof(val);
-  if (getsockopt(s, SOL_SOCKET, SO_ERROR, &val, &len) < 0) {
-    return -1;
-  } else if (val != 0) {
-    return -1;
-  }
-  return 0;
-}
-#endif
-
 static int wait_connect(int s, int r)
 {
   fd_set fds;
@@ -146,14 +131,8 @@ int mail_tcp_connect(const char * server, uint16_t port)
 int mail_tcp_connect_with_local_address(const char * server, uint16_t port,
     const char * local_address, uint16_t local_port)
 {
-#ifndef HAVE_IPV6
   struct hostent * remotehost;
   struct sockaddr_in sa;
-#else /* HAVE_IPV6 */
-  struct addrinfo hints, *res, *ai;
-  struct addrinfo la_hints;
-  char port_str[6];
-#endif
 #ifdef WIN32
   SOCKET s;
   long r;
@@ -161,8 +140,6 @@ int mail_tcp_connect_with_local_address(const char * server, uint16_t port,
   int s;
   int r;
 #endif
-
-#ifndef HAVE_IPV6
   s = socket(PF_INET, SOCK_STREAM, 0);
   if (s == -1)
     goto err;
@@ -201,103 +178,9 @@ int mail_tcp_connect_with_local_address(const char * server, uint16_t port,
   if (r == -1) {
     goto close_socket;
   }
-#else /* HAVE_IPV6 */
-  memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_protocol = IPPROTO_TCP;
-  
-  memset(&la_hints, 0, sizeof(la_hints));
-  la_hints.ai_family = AF_UNSPEC;
-  la_hints.ai_socktype = SOCK_STREAM;
-  la_hints.ai_flags = AI_PASSIVE;
-  
-  /* convert port from integer to string. */
-  snprintf(port_str, sizeof(port_str), "%d", port);
-  
-  res = NULL;
-  if (getaddrinfo(server, port_str, &hints, &res) != 0)
-    goto err;
-
-  s = -1;
-  for (ai = res; ai != NULL; ai = ai->ai_next) {
-    s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-
-    if (s == -1)
-      continue;
-    
-    // Christopher Lyon Anderson - prevent SigPipe
-#ifdef SO_NOSIGPIPE
-    int kOne = 1;
-    int err = setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &kOne, sizeof(kOne));
-    if (err != 0)
-        continue;
-#endif
-
-    if ((local_address != NULL) || (local_port != 0)) {
-      char local_port_str[6];
-      char * p_local_port_str;
-      struct addrinfo * la_res;
-      
-      if (local_port != 0) {
-        snprintf(local_port_str, sizeof(local_port_str), "%d", local_port);
-        p_local_port_str = local_port_str;
-      }
-      else {
-        p_local_port_str = NULL;
-      }
-      la_res = NULL;
-      r = getaddrinfo(local_address, p_local_port_str, &la_hints, &la_res);
-      if (r != 0)
-        goto close_socket;
-      r = bind(s, (struct sockaddr *) la_res->ai_addr, la_res->ai_addrlen);
-      if (la_res != NULL)
-        freeaddrinfo(la_res);
-      if (r == -1)
-        goto close_socket;
-    }
-    
-    r = prepare_fd(s);
-    if (r == -1) {
-      goto close_socket;
-    }
-    
-    r = connect(s, ai->ai_addr, ai->ai_addrlen);
-    r = wait_connect(s, r);
-    
-    if (r != -1) {
-      r = verify_sock_errors(s);
-    }
-
-    if (r == -1) {
-      if (ai->ai_next) {
-#ifdef WIN32
-	  closesocket(s);
-#else
-	  close(s);
-#endif
-	  continue;
-      } else {
-        goto close_socket;
-      }
-    }
-    /* if we're here, we're good */
-    break;
-  }
-  
-  if (res != NULL)
-    freeaddrinfo(res);
-
-  if (ai == NULL)
-    goto err;
-#endif
   return s;
   
  close_socket:
-#ifdef HAVE_IPV6
-  if (res != NULL)
-    freeaddrinfo(res);
-#endif
 #ifdef WIN32
   closesocket(s);
 #else
