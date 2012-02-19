@@ -2884,6 +2884,7 @@
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;
 				PRODUCT_NAME = etpan;
+				SDKROOT = iphoneos;
 			};
 			name = Debug;
 		};
@@ -2898,6 +2899,7 @@
 				INSTALL_PATH = /usr/local/lib;
 				PREBINDING = NO;
 				PRODUCT_NAME = etpan;
+				SDKROOT = iphoneos;
 				ZERO_LINK = NO;
 			};
 			name = Release;
